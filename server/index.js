@@ -22,6 +22,8 @@ const RECENT_WINDOW_DAYS = 7;
 const MAX_EVALUATED_HOTSPOTS = 50;
 const HOTSPOT_ACTIVITY_MAX_RESULTS = 500;
 const HOTSPOT_ACTIVITY_CONCURRENCY = 5;
+const NEARBY_OBS_MAX_RADIUS_KM = 50;
+const NOTABLE_MAX_RESULTS = 500;
 const TOP_COUNT = 5;
 
 const app = express();
@@ -116,6 +118,50 @@ app.get('/api/hotspots/top', async (req, res) => {
   }
 });
 
+app.get('/api/hotspots/notable', async (req, res) => {
+  try {
+    const { distanceKm = '25', lat, lng, postalCode } = req.query;
+    const distance = normalizeDistance(distanceKm);
+    const origin = await resolveOrigin({ lat, lng, postalCode });
+
+    const hotspots = await getHotspotsByGeo({
+      ...origin,
+      distanceKm: distance,
+      limit: MAX_EVALUATED_HOTSPOTS,
+    });
+
+    if (!hotspots.length) {
+      res.status(404).json({ message: 'No hotspots found for the provided criteria.' });
+      return;
+    }
+
+    const hotspotMap = new Map(hotspots.map((hotspot) => [hotspot.locId, hotspot]));
+    const notableHotspots = await getNotableHotspotsWithinRadius(
+      { ...origin, distanceKm: distance },
+      hotspotMap,
+      origin,
+    );
+
+    const ranked = notableHotspots
+      .sort((a, b) => {
+        if (b.activity.observationCount !== a.activity.observationCount) {
+          return b.activity.observationCount - a.activity.observationCount;
+        }
+        return b.activity.checklistCount - a.activity.checklistCount;
+      })
+      .slice(0, TOP_COUNT);
+
+    res.json({
+      mode: 'notable',
+      distanceKm: distance,
+      origin,
+      hotspots: ranked,
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const clientDistDir = path.resolve(__dirname, '../client/dist');
@@ -198,43 +244,44 @@ async function getHotspotActivity(locId) {
   try {
     const response = await fetchWithKey(url);
     const observations = (await response.json()) ?? [];
-
-    const uniqueChecklists = new Set();
-    let observationCount = 0;
-    let lastObservationDate = null;
-
-    observations.forEach((obs) => {
-      if (obs.subId) {
-        uniqueChecklists.add(obs.subId);
-      }
-      if (typeof obs.howMany === 'number') {
-        observationCount += obs.howMany;
-      } else {
-        observationCount += 1;
-      }
-      if (obs.obsDt && (!lastObservationDate || obs.obsDt > lastObservationDate)) {
-        lastObservationDate = obs.obsDt;
-      }
-    });
-
-    const checklistCount = uniqueChecklists.size;
-    return {
-      checklistCount,
-      observationCount,
-      lastObservationDate,
-      score: checklistCount * 2 + observationCount,
-    };
+    return summarizeObservationStats(observations);
   } catch (error) {
     if (error.statusCode === 404 || error.statusCode === 410) {
-      return {
-        checklistCount: 0,
-        observationCount: 0,
-        lastObservationDate: null,
-        score: 0,
-      };
+      return summarizeObservationStats([]);
     }
     throw error;
   }
+}
+
+async function getNotableHotspotsWithinRadius(location, hotspotMap, origin) {
+  const searchParams = new URLSearchParams({
+    lat: String(location.lat),
+    lng: String(location.lng),
+    dist: String(Math.min(location.distanceKm, NEARBY_OBS_MAX_RADIUS_KM)),
+    back: String(RECENT_WINDOW_DAYS),
+    hotspot: 'true',
+    maxResults: String(NOTABLE_MAX_RESULTS),
+  });
+
+  const url = `${EBIRD_BASE_URL}/data/obs/geo/recent/notable?${searchParams.toString()}`;
+  const response = await fetchWithKey(url);
+  const observations = (await response.json()) ?? [];
+
+  const grouped = groupObservationsByLocation(observations, { includeSpecies: true });
+  const results = [];
+
+  grouped.forEach((accumulator, locId) => {
+    const hotspot = hotspotMap.get(locId);
+    if (!hotspot) {
+      return;
+    }
+    results.push({
+      ...normalizeHotspot(hotspot, origin),
+      activity: finalizeActivityAccumulator(accumulator),
+    });
+  });
+
+  return results;
 }
 
 async function fetchWithKey(url) {
@@ -273,6 +320,91 @@ async function mapWithConcurrency(items, limit, mapper) {
 function normalizeDistance(value) {
   const numeric = toNumber(value, 'distanceKm');
   return Math.min(Math.max(numeric, 1), 500);
+}
+
+function summarizeObservationStats(observations, { includeSpecies = false } = {}) {
+  const accumulator = createActivityAccumulator(includeSpecies);
+  (observations ?? []).forEach((obs) => applyObservationToAccumulator(accumulator, obs));
+  return finalizeActivityAccumulator(accumulator);
+}
+
+function groupObservationsByLocation(observations, { includeSpecies = false } = {}) {
+  const map = new Map();
+  (observations ?? []).forEach((obs) => {
+    if (!obs.locId) {
+      return;
+    }
+    if (!map.has(obs.locId)) {
+      map.set(obs.locId, createActivityAccumulator(includeSpecies));
+    }
+    applyObservationToAccumulator(map.get(obs.locId), obs);
+  });
+  return map;
+}
+
+function createActivityAccumulator(includeSpecies = false) {
+  return {
+    checklistIds: new Set(),
+    observationCount: 0,
+    lastObservationTimestamp: null,
+    includeSpecies,
+    speciesMap: includeSpecies ? new Map() : null,
+  };
+}
+
+function applyObservationToAccumulator(accumulator, observation) {
+  if (!observation) {
+    return;
+  }
+
+  if (observation.subId) {
+    accumulator.checklistIds.add(observation.subId);
+  }
+
+  const increment = typeof observation.howMany === 'number' ? observation.howMany : 1;
+  accumulator.observationCount += increment;
+
+  if (observation.obsDt) {
+    const timestamp = Date.parse(observation.obsDt);
+    if (!Number.isNaN(timestamp)) {
+      if (!accumulator.lastObservationTimestamp || timestamp > accumulator.lastObservationTimestamp) {
+        accumulator.lastObservationTimestamp = timestamp;
+      }
+    }
+  }
+
+  if (accumulator.includeSpecies && accumulator.speciesMap && observation.speciesCode) {
+    if (!accumulator.speciesMap.has(observation.speciesCode)) {
+      accumulator.speciesMap.set(observation.speciesCode, {
+        speciesCode: observation.speciesCode,
+        commonName: observation.comName ?? null,
+        scientificName: observation.sciName ?? null,
+      });
+    }
+  }
+}
+
+function finalizeActivityAccumulator(accumulator) {
+  const checklistCount = accumulator.checklistIds.size;
+  const observationCount = accumulator.observationCount;
+  const result = {
+    checklistCount,
+    observationCount,
+    lastObservationDate: accumulator.lastObservationTimestamp
+      ? new Date(accumulator.lastObservationTimestamp).toISOString()
+      : null,
+    score: checklistCount * 2 + observationCount,
+  };
+
+  if (accumulator.includeSpecies && accumulator.speciesMap && accumulator.speciesMap.size > 0) {
+    result.notableSpecies = Array.from(accumulator.speciesMap.values()).sort((a, b) => {
+      const nameA = a.commonName ?? a.scientificName ?? '';
+      const nameB = b.commonName ?? b.scientificName ?? '';
+      return nameA.localeCompare(nameB);
+    });
+  }
+
+  return result;
 }
 
 function toNumber(value, label) {

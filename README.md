@@ -58,6 +58,7 @@ npm run build
 | --- | --- |
 | `GET /api/hotspots/random` | Returns a random hotspot inside `distanceKm` (1-500 km) of the provided `lat/lng` or `postalCode`. Includes 7-day activity metrics gathered from the official `/data/obs/{locId}/recent` endpoint. |
 | `GET /api/hotspots/top` | Returns the top 5 hotspots ranked by `(checklists x 2) + observations` collected from the last 7 days. Accepts the same location query parameters. |
+| `GET /api/hotspots/notable` | Returns the top 5 hotspots that recorded the most notable (rare/unusual) observations in the past 7 days within the requested radius. |
 
 Each request must supply either `lat` and `lng` **or** `postalCode`. ZIP code lookup uses the public Zippopotam service, so no extra keys are required.
 
@@ -65,6 +66,7 @@ Back-end calls strictly follow the endpoints documented in https://documenter.ge
 
 - Nearby hotspots: `GET /ref/hotspot/geo?lat={lat}&lng={lng}&dist={km}&back={days}`
 - Hotspot activity: `GET /data/obs/{locId}/recent?back={days}&maxResults={n}`
+- Nearby notable observations: `GET /data/obs/geo/recent/notable?lat={lat}&lng={lng}&dist={km}&back={days}&hotspot=true`
 
 ## Tech stack
 

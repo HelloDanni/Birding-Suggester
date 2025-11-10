@@ -11,6 +11,7 @@ type HotspotActivity = {
   observationCount: number;
   lastObservationDate: string | null;
   score: number;
+  notableSpecies?: NotableSpecies[];
 };
 
 type Hotspot = {
@@ -25,11 +26,21 @@ type Hotspot = {
   activity: HotspotActivity;
 };
 
+type NotableSpecies = {
+  speciesCode: string;
+  commonName: string | null;
+  scientificName: string | null;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api';
+const DISTANCE_OPTIONS = [5, 10, 15, 20, 30].map((miles) => ({
+  miles,
+  valueKm: Math.round(miles * 1.60934 * 10) / 10,
+}));
 
 export function App() {
-  const [mode, setMode] = useState<'random' | 'top'>('random');
-  const [distanceKm, setDistanceKm] = useState(25);
+  const [mode, setMode] = useState<'random' | 'top' | 'notable'>('random');
+  const [distanceKm, setDistanceKm] = useState(DISTANCE_OPTIONS[1].valueKm);
   const [postalCode, setPostalCode] = useState('');
   const [coords, setCoords] = useState<Coordinates | null>(null);
   const [loading, setLoading] = useState(false);
@@ -37,8 +48,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [randomHotspot, setRandomHotspot] = useState<Hotspot | null>(null);
-  const [topHotspots, setTopHotspots] = useState<Hotspot[]>([]);
+  const [rankedHotspots, setRankedHotspots] = useState<Hotspot[]>([]);
   const [hasFetched, setHasFetched] = useState(false);
+  const [expandedNotableId, setExpandedNotableId] = useState<string | null>(null);
 
   const locationLabel = useMemo(() => {
     if (coords) {
@@ -69,8 +81,9 @@ export function App() {
     setError(null);
     setStatus(null);
     setRandomHotspot(null);
-    setTopHotspots([]);
+    setRankedHotspots([]);
     setHasFetched(false);
+    setExpandedNotableId(null);
 
     if (!coords && postalCode.trim().length !== 5) {
       setError('Enter a valid 5-digit ZIP code or allow location access.');
@@ -79,7 +92,8 @@ export function App() {
 
     setLoading(true);
     try {
-      const endpoint = mode === 'random' ? 'hotspots/random' : 'hotspots/top';
+      const endpoint =
+        mode === 'random' ? 'hotspots/random' : mode === 'top' ? 'hotspots/top' : 'hotspots/notable';
       const response = await fetch(`${API_BASE_URL}/${endpoint}?${buildQuery()}`);
       const payload = await response.json();
       if (!response.ok) {
@@ -89,7 +103,7 @@ export function App() {
       if (mode === 'random') {
         setRandomHotspot(payload.hotspot);
       } else {
-        setTopHotspots(payload.hotspots ?? []);
+        setRankedHotspots(payload.hotspots ?? []);
       }
       setHasFetched(true);
     } catch (err) {
@@ -102,6 +116,10 @@ export function App() {
 
   const handleSubmit = async () => {
     await fetchHotspots();
+  };
+
+  const toggleNotableList = (locId: string) => {
+    setExpandedNotableId((prev) => (prev === locId ? null : locId));
   };
 
   const requestCurrentLocation = () => {
@@ -138,10 +156,11 @@ export function App() {
 
   useEffect(() => {
     setRandomHotspot(null);
-    setTopHotspots([]);
+    setRankedHotspots([]);
     setStatus(null);
     setError(null);
     setHasFetched(false);
+    setExpandedNotableId(null);
   }, [mode]);
 
   return (
@@ -162,22 +181,25 @@ export function App() {
           <button className={mode === 'top' ? 'active' : ''} onClick={() => setMode('top')}>
             Top 5 active spots
           </button>
+          <button className={mode === 'notable' ? 'active' : ''} onClick={() => setMode('notable')}>
+            Top 5 notable spots
+          </button>
         </header>
 
         <div className="form-grid">
           <div className="form-control">
-            <label htmlFor="distance">Search radius (km)</label>
-            <input
+            <label htmlFor="distance">Search radius</label>
+            <select
               id="distance"
-              type="number"
-              min={1}
-              max={200}
               value={distanceKm}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                setDistanceKm(Number.isNaN(value) ? 1 : value);
-              }}
-            />
+              onChange={(event) => setDistanceKm(Number(event.target.value))}
+            >
+              {DISTANCE_OPTIONS.map((option) => (
+                <option key={option.miles} value={option.valueKm}>
+                  {option.miles} miles ({option.valueKm} km)
+                </option>
+              ))}
+            </select>
           </div>
           <div className="form-control">
             <label htmlFor="zip">ZIP code (optional)</label>
@@ -203,7 +225,13 @@ export function App() {
             {geolocating ? 'Locating...' : 'Use my current location'}
           </button>
           <button className="primary" type="button" onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Searching...' : mode === 'random' ? 'Find a random hotspot' : 'Show top hotspots'}
+            {loading
+              ? 'Searching...'
+              : mode === 'random'
+                ? 'Find a random hotspot'
+                : mode === 'top'
+                  ? 'Show top hotspots'
+                  : 'Show notable hotspots'}
           </button>
           <span className="muted">{locationLabel}</span>
         </div>
@@ -247,19 +275,25 @@ export function App() {
         </section>
       )}
 
-      {!loading && mode === 'top' && (
+      {!loading && mode !== 'random' && (
         <section className="card">
-          <h2>Top 5 active hotspots</h2>
+          <h2>{mode === 'top' ? 'Top 5 active hotspots' : 'Top 5 notable hotspots'}</h2>
           <p className="muted">
-            Ranked by checklists and observations submitted in the last 7 days (score = checklists x 2 + observations).
+            {mode === 'top'
+              ? 'Ranked by checklists and observations submitted in the last 7 days (score = checklists x 2 + observations).'
+              : 'Ranked by the number of notable (rare or unusual) checklists submitted in the last 7 days.'}
           </p>
           {!hasFetched ? (
-            <p className="muted">Run the search to see the hottest hotspots from the past 7 days.</p>
-          ) : topHotspots.length === 0 ? (
-            <p className="muted">No hotspots met the 7-day activity threshold within this radius.</p>
+            <p className="muted">Run the search to see what looks interesting this week.</p>
+          ) : rankedHotspots.length === 0 ? (
+            <p className="muted">
+              {mode === 'top'
+                ? 'No hotspots met the 7-day activity threshold within this radius.'
+                : 'No notable sightings have been reported within this radius in the past 7 days.'}
+            </p>
           ) : (
             <div className="results-grid">
-              {topHotspots.map((spot) => (
+              {rankedHotspots.map((spot) => (
                 <article key={spot.locId} className="result-card">
                   <h3>{spot.name}</h3>
                   <p className="muted">
@@ -275,14 +309,52 @@ export function App() {
                       <strong>{spot.activity.checklistCount}</strong>
                     </div>
                     <div className="stat-pill">
-                      Observations
-                      <strong>{spot.activity.observationCount}</strong>
+                      {mode === 'top' ? 'Observations' : 'Notable observations'}
+                      {mode === 'notable' &&
+                      spot.activity.notableSpecies &&
+                      spot.activity.notableSpecies.length > 0 ? (
+                        <button
+                          type="button"
+                          className="stat-link-button"
+                          onClick={() => toggleNotableList(spot.locId)}
+                          aria-expanded={expandedNotableId === spot.locId}
+                        >
+                          {spot.activity.observationCount}
+                        </button>
+                      ) : (
+                        <strong>{spot.activity.observationCount}</strong>
+                      )}
                     </div>
                     <div className="stat-pill">
                       Score
                       <strong>{spot.activity.score}</strong>
                     </div>
                   </div>
+                  {mode === 'notable' &&
+                    spot.activity.notableSpecies &&
+                    spot.activity.notableSpecies.length > 0 &&
+                    expandedNotableId === spot.locId && (
+                      <div className="notable-panel">
+                        <p className="muted">Species flagged as notable in the past 7 days:</p>
+                        <ul>
+                          {spot.activity.notableSpecies.map((species, index) => (
+                            <li
+                              key={
+                                species.speciesCode ??
+                                species.commonName ??
+                                species.scientificName ??
+                                `${spot.locId}-${index}`
+                              }
+                            >
+                              <strong>{species.commonName ?? species.scientificName ?? 'Unknown species'}</strong>
+                              {species.scientificName && species.scientificName !== species.commonName ? (
+                                <span className="muted"> ({species.scientificName})</span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                 </article>
               ))}
             </div>

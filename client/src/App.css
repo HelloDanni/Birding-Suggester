@@ -136,16 +136,26 @@ body {
   border: 1px solid rgba(37, 99, 235, 0.15);
 }
 
-.stat-pill strong {
+.stat-pill strong,
+.stat-link-button {
   display: block;
   font-size: 1.75rem;
   margin-top: 0.25rem;
   color: #1d4ed8;
 }
 
+.stat-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .results-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
 }
 
@@ -169,6 +179,24 @@ body {
   text-decoration: none;
   color: #2563eb;
   font-weight: 600;
+}
+
+.notable-panel {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+}
+
+.notable-panel ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  color: #0f172a;
+}
+
+.notable-panel li + li {
+  margin-top: 0.3rem;
 }
 
 .error {
