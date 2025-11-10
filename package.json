@@ -1,0 +1,30 @@
+{
+  "name": "birding-suggester",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm:server\" \"npm:client\"",
+    "server": "dotenv -e .env -- nodemon server/index.js",
+    "client": "npm --prefix client run dev",
+    "build": "npm run build:client",
+    "build:client": "npm --prefix client run build",
+    "preview": "npm --prefix client run preview",
+    "start": "dotenv -e .env -- node server/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "dotenv-cli": "^11.0.0",
+    "nodemon": "^3.1.10"
+  }
+}
