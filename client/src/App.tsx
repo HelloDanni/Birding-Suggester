@@ -178,7 +178,7 @@ export function App() {
           <h1>Discover Your Next Birding Adventure</h1>
           <p>
             Can’t decide where to go birding today? BirdBrain takes the guesswork out of it. Instantly find the most
-            active nearby hotspots—or let the app surprise you with a random pick. Smarter birding starts with one tap.
+            active nearby hotspots—or let the app surprise you with a random pick.
           </p>
         </div>
       </section>
