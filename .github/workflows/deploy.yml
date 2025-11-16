@@ -18,6 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: github-pages
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +37,7 @@ jobs:
       - name: Build client
         env:
           GITHUB_PAGES: 'true'
-          VITE_API_BASE_URL: https://birdbrain.onrender.com
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }} # https://birdbrain.onrender.com/api
         run: npm run build:client
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
